@@ -1,18 +1,16 @@
 #!/usr/bin/env python
 # coding: utf-8
 #
-# gmeta
-# -----
-#
-# gmeta is designed for use with git's pre-commit and post-checkout hooks to
-# version control metadata related to files in addition to the files
-# themselves.
-#
-# It uses a sqlite database to store the metadata.
-#
-#
 # Author: Naitik Shah <n@daaku.org>
-#
+"""gmeta is designed for use with git's pre-commit and post-checkout hooks to
+version control metadata related to files in addition to the files
+themselves.
+
+It uses a sqlite database to store the metadata.
+
+"""
+
+__version__ = "0.1.0"
 
 import os
 import sqlite3
@@ -23,7 +21,7 @@ from collections import namedtuple
 
 
 """ A File object containing the metadata """
-File = namedtuple('File', 'name, imode, ctime, mtime, atime')
+File = namedtuple("File", "name, imode, ctime, mtime, atime")
 
 class Store(object):
     """
@@ -31,7 +29,7 @@ class Store(object):
 
     """
 
-    def __init__(self, db_file=".gmeta"):
+    def __init__(self, db_file):
         self.cache = {}
         self.initdb(db_file)
 
@@ -187,7 +185,7 @@ class Store(object):
             self.cache[file.name] = file
             yield file
 
-def pre_commit(store):
+def pre_commit(store, force):
     """
     Execute the pre-commit hook.
 
@@ -196,7 +194,7 @@ def pre_commit(store):
     for root, dirs, files in os.walk("."):
         for name in files:
             name = os.path.join(root, name)[2:] # drop leading "./"
-            if name not in store:
+            if force or name not in store:
                 stat = os.stat(name)
                 imode = stat[ST_MODE]
                 ctime = stat[ST_CTIME]
@@ -205,7 +203,7 @@ def pre_commit(store):
                 f = File(name, imode, ctime, mtime, atime)
                 store[name] = f
 
-def post_checkout(store):
+def post_checkout(store, force):
     """
     Execute the post-checkout hook.
 
@@ -218,34 +216,65 @@ def main():
     """
     The entry point for the script.
 
-    # pre-commit
-    #   --rebuild => delete and created new db
-    #
-    # post-checkout
-    #   --force => restore all metadata
-
     """
 
-    # colorized logger
-    DEF_COLOR="[0m"
-    BLUE="[34;01m"
-    CYAN="[36;01m"
-    GREEN="[32;01m"
-    RED="[31;01m"
-    GRAY="[37;01m"
-    YELLOW="[33;01m"
+    from optparse import OptionParser
 
-    log.addLevelName(log.DEBUG,    CYAN   + '>> DEBUG')
-    log.addLevelName(log.INFO,     GREEN  + '>> INFO')
-    log.addLevelName(log.WARNING,  YELLOW + '>> WARNING')
-    log.addLevelName(log.ERROR,    RED    + '>> ERROR')
-    log.addLevelName(log.CRITICAL, RED    + '>> CRITICAL')
-    log.basicConfig(level=log.DEBUG, format=' %(levelname)-19s' + DEF_COLOR + ' %(message)s')
+    usage = "usage: %prog [options] (pre-commit|post-checkout)"
+    parser = OptionParser(usage=usage, version="%prog-" + __version__, description=__doc__)
+    parser.add_option(
+        "--db",
+        action="store",
+        dest="db_file",
+        default=".gmeta",
+        help='the db file to use [default ".gmeta"]'
+    )
+    parser.add_option(
+        "-f", "--force",
+        action="store_true",
+        dest="force",
+        default=False,
+        help="force processing all files"
+    )
+    parser.add_option(
+        "-l", "--logger",
+        action="store_true",
+        dest="logger",
+        default=False,
+        help="enable the verbose logger"
+    )
 
-    store = Store()
-    #pre_commit(store)
-    post_checkout(store)
-    print 'Count: ' + str(len(store))
+    (options, args) = parser.parse_args()
 
-if __name__ == '__main__':
+    if len(args) != 1:
+        parser.error("incorrect number of arguments")
+
+    if options.logger:
+        # colorized logger
+        DEF_COLOR="[0m"
+        BLUE="[34;01m"
+        CYAN="[36;01m"
+        GREEN="[32;01m"
+        RED="[31;01m"
+        GRAY="[37;01m"
+        YELLOW="[33;01m"
+
+        log.addLevelName(log.DEBUG,    CYAN   + ">> DEBUG")
+        log.addLevelName(log.INFO,     GREEN  + ">> INFO")
+        log.addLevelName(log.WARNING,  YELLOW + ">> WARNING")
+        log.addLevelName(log.ERROR,    RED    + ">> ERROR")
+        log.addLevelName(log.CRITICAL, RED    + ">> CRITICAL")
+        log.basicConfig(level=log.DEBUG, format=" %(levelname)-19s" + DEF_COLOR + " %(message)s")
+
+    store = Store(db_file=options.db_file)
+    force = options.force
+    command = args[0]
+    if command == "pre-commit":
+        pre_commit(store, force)
+    elif command == "post-checkout":
+        post_checkout(store, force)
+    else:
+        parser.error('unknown argument: "%s"' % command)
+
+if __name__ == "__main__":
     main()
