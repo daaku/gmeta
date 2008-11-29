@@ -1,0 +1,251 @@
+#!/usr/bin/env python
+# coding: utf-8
+#
+# gmeta
+# -----
+#
+# gmeta is designed for use with git's pre-commit and post-checkout hooks to
+# version control metadata related to files in addition to the files
+# themselves.
+#
+# It uses a sqlite database to store the metadata.
+#
+#
+# Author: Naitik Shah <n@daaku.org>
+#
+
+import os
+import sqlite3
+import stat
+import logging as log
+from stat import ST_MODE, ST_CTIME, ST_MTIME, ST_ATIME
+from collections import namedtuple
+
+
+""" A File object containing the metadata """
+File = namedtuple('File', 'name, imode, ctime, mtime, atime')
+
+class Store(object):
+    """
+    The Store is a collection of the Files and their metadata.
+
+    """
+
+    def __init__(self, db_file=".gmeta"):
+        self.cache = {}
+        self.initdb(db_file)
+
+    def initdb(self, db_file):
+        """
+        Initialize the database and create the schema if necessary.
+
+        """
+
+        self.db = sqlite3.connect(db_file)
+        try:
+            exists_sql = """
+                SELECT * FROM files LIMIT 1
+            """
+            self.db.execute(exists_sql)
+            log.debug('Using existing "files" table.')
+        except sqlite3.OperationalError, e:
+            create_sql = """
+                CREATE TABLE files (
+                    name  TEXT,
+                    imode INTEGER,
+                    ctime INTEGER,
+                    mtime INTEGER,
+                    atime INTEGER
+                )
+            """
+            self.db.execute(create_sql)
+            self.db.commit()
+            log.debug('Created new "files" table.')
+        self.cursor = self.db.cursor()
+
+    def __del__(self):
+        """
+        The changes to a Store are commited automatically when the Store is
+        normally destroyed.
+
+        """
+
+        log.debug("Commiting.")
+        self.db.commit()
+
+    def __len__(self):
+        """
+        Count the number of Files in this Store.
+
+        """
+
+        count_sql = """
+            SELECT COUNT(*) FROM files
+        """
+        cursor = self.cursor
+        cursor.execute(count_sql)
+        return cursor.fetchone()[0]
+
+    def __getitem__(self, name):
+        """
+        Look up a File by its name.
+
+        """
+
+        try:
+            return self.cache[name]
+        except KeyError:
+            select_sql = """
+                SELECT * FROM files WHERE name = ?
+            """
+            cursor = self.cursor
+            cursor.execute(select_sql, (name,))
+            data = cursor.fetchone()
+            if data is None:
+                raise KeyError
+            else:
+                file = File(*data)
+                self.cache[name] = file
+                return file
+
+    def __setitem__(self, name, file):
+        """
+        Add or update an existing File by name.
+
+        """
+
+        if name in self:
+            cached = self[name]
+            # do an update only if something has changed
+            if (cached.imode == file.imode and
+                cached.ctime == file.ctime and
+                cached.mtime == file.mtime and
+                cached.atime == file.atime):
+                log.debug('Nothing changed for "%s" - skipping update.' % name)
+            else:
+                update_sql = """
+                    UPDATE files SET
+                    imode = ?,
+                    ctime = ?,
+                    mtime = ?,
+                    atime = ?
+                    WHERE name = ?
+                """
+                data = (file.imode, file.ctime, file.mtime, file.atime, file.name)
+                self.cursor.execute(update_sql, data)
+                self.cache[name] = file
+                log.debug('Updated existing row for "%s".' % name)
+        else:
+            insert_sql = """
+                INSERT INTO files VALUES
+                (?, ?, ?, ?, ?)
+            """
+            self.cursor.execute(insert_sql, file)
+            self.cache[name] = file
+            log.debug('Inserted new row for "%s".' % name)
+
+    def __delitem__(self, name):
+        """
+        Delete an existing File by name. It is not an error if a File with the
+        given name is not found.
+
+        """
+
+        delete_sql = """
+            DELETE FROM files WHERE name = ?
+        """
+        self.cursor.execute(delete_sql, (name,))
+        try:
+            del self.cache[name]
+        except KeyError:
+            pass
+
+    def __contains__(self, name):
+        """
+        Check if a File with the given name exists.
+
+        """
+
+        try:
+            self[name] # will raise an error if not found
+            return True
+        except KeyError:
+            return False
+
+    def __iter__(self):
+        """
+        Iterate over all the Files in this Store.
+
+        """
+
+        select_names = """
+            SELECT * FROM files
+        """
+        cursor = self.cursor
+        cursor.execute(select_names)
+        for file in map(File._make, cursor.fetchall()):
+            self.cache[file.name] = file
+            yield file
+
+def pre_commit(store):
+    """
+    Execute the pre-commit hook.
+
+    """
+
+    for root, dirs, files in os.walk("."):
+        for name in files:
+            name = os.path.join(root, name)[2:] # drop leading "./"
+            if name not in store:
+                stat = os.stat(name)
+                imode = stat[ST_MODE]
+                ctime = stat[ST_CTIME]
+                mtime = stat[ST_MTIME]
+                atime = stat[ST_ATIME]
+                f = File(name, imode, ctime, mtime, atime)
+                store[name] = f
+
+def post_checkout(store):
+    """
+    Execute the post-checkout hook.
+
+    """
+
+    for file in store:
+        print file
+
+def main():
+    """
+    The entry point for the script.
+
+    # pre-commit
+    #   --rebuild => delete and created new db
+    #
+    # post-checkout
+    #   --force => restore all metadata
+
+    """
+
+    # colorized logger
+    DEF_COLOR="[0m"
+    BLUE="[34;01m"
+    CYAN="[36;01m"
+    GREEN="[32;01m"
+    RED="[31;01m"
+    GRAY="[37;01m"
+    YELLOW="[33;01m"
+
+    log.addLevelName(log.DEBUG,    CYAN   + '>> DEBUG')
+    log.addLevelName(log.INFO,     GREEN  + '>> INFO')
+    log.addLevelName(log.WARNING,  YELLOW + '>> WARNING')
+    log.addLevelName(log.ERROR,    RED    + '>> ERROR')
+    log.addLevelName(log.CRITICAL, RED    + '>> CRITICAL')
+    log.basicConfig(level=log.DEBUG, format=' %(levelname)-19s' + DEF_COLOR + ' %(message)s')
+
+    store = Store()
+    #pre_commit(store)
+    post_checkout(store)
+    print 'Count: ' + str(len(store))
+
+if __name__ == '__main__':
+    main()
