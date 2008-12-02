@@ -2,13 +2,16 @@
 # coding: utf-8
 #
 # Author: Naitik Shah <n@daaku.org>
+#
 """gmeta is designed for use with git's pre-commit and post-checkout hooks to
-version control metadata related to files in addition to the files
-themselves.
+allow managing the metadata of files in addition to their content.
 
 It uses a sqlite database to store the metadata.
 
-"""
+The included fields are:
+ - mtime
+ - atime
+ - mode"""
 
 __version__ = "0.1.0"
 
@@ -217,8 +220,8 @@ def main():
 
     from optparse import OptionParser
 
-    usage = "usage: %prog [options] (pre-commit|post-checkout)"
-    parser = OptionParser(usage=usage, version="%prog-" + __version__, description=__doc__)
+    usage = "usage: %%prog [options] (pre-commit|post-checkout)\n\n%s" % __doc__
+    parser = OptionParser(usage=usage, version="%prog-" + __version__)
     parser.add_option(
         "--db",
         action="store",
