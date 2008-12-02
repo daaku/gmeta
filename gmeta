@@ -16,12 +16,12 @@ import os
 import sqlite3
 import stat
 import logging as log
-from stat import ST_MODE, ST_CTIME, ST_MTIME, ST_ATIME
+from stat import ST_MODE, ST_MTIME, ST_ATIME
 from collections import namedtuple
 
 
 """ A File object containing the metadata """
-File = namedtuple("File", "name, imode, ctime, mtime, atime")
+File = namedtuple("File", "name, imode, mtime, atime")
 
 class Store(object):
     """
@@ -51,7 +51,6 @@ class Store(object):
                 CREATE TABLE files (
                     name  TEXT,
                     imode INTEGER,
-                    ctime INTEGER,
                     mtime INTEGER,
                     atime INTEGER
                 )
@@ -116,7 +115,6 @@ class Store(object):
             cached = self[name]
             # do an update only if something has changed
             if (cached.imode == file.imode and
-                cached.ctime == file.ctime and
                 cached.mtime == file.mtime and
                 cached.atime == file.atime):
                 log.debug('Nothing changed for "%s" - skipping update.' % name)
@@ -124,19 +122,18 @@ class Store(object):
                 update_sql = """
                     UPDATE files SET
                     imode = ?,
-                    ctime = ?,
                     mtime = ?,
                     atime = ?
                     WHERE name = ?
                 """
-                data = (file.imode, file.ctime, file.mtime, file.atime, file.name)
+                data = (file.imode, file.mtime, file.atime, file.name)
                 self.cursor.execute(update_sql, data)
                 self.cache[name] = file
                 log.debug('Updated existing row for "%s".' % name)
         else:
             insert_sql = """
                 INSERT INTO files VALUES
-                (?, ?, ?, ?, ?)
+                (?, ?, ?, ?)
             """
             self.cursor.execute(insert_sql, file)
             self.cache[name] = file
@@ -197,10 +194,9 @@ def pre_commit(store, force):
             if force or name not in store:
                 stat = os.stat(name)
                 imode = stat[ST_MODE]
-                ctime = stat[ST_CTIME]
                 mtime = stat[ST_MTIME]
                 atime = stat[ST_ATIME]
-                f = File(name, imode, ctime, mtime, atime)
+                f = File(name, imode, mtime, atime)
                 store[name] = f
 
 def post_checkout(store, force):
@@ -210,7 +206,8 @@ def post_checkout(store, force):
     """
 
     for file in store:
-        print file
+        os.utime(file.name, (file.atime, file.mtime))
+        os.chmod(file.name, file.imode)
 
 def main():
     """
