@@ -290,6 +290,22 @@ def restore_files(store, files_iter):
         os.utime(file.name, (file.atime, file.mtime))
         os.chmod(file.name, file.imode)
 
+def init_hooks():
+    if not os.path.exists(".git/hooks/"):
+        log.critical('Could not find the ".git/hooks/" directory.\n'
+                'Make sure you are in a top level git repository.')
+        exit(1)
+
+    realpath = os.path.realpath
+    gmeta = realpath(sys.argv[0])
+    for hook in ["pre-commit", "post-checkout"]:
+        expected = ".git/hooks/" + hook
+        if os.path.exists(expected):
+            if realpath(expected) != gmeta:
+                log.error("Hook file " + expected + " already exists.")
+        else:
+            os.symlink(gmeta, expected)
+
 def main():
     """
     The entry point for the script.
@@ -346,6 +362,7 @@ Commands:
 
     store = Store()
     if command == "init":
+        init_hooks()
         add_files(store, all_files)
     elif command == "pre-commit":
         add_files(store, pre_commit_files)
