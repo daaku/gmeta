@@ -199,6 +199,11 @@ class Store(object):
             yield file
 
 def run(command, success='', failure='', fatal=False):
+    """
+    getstatusoutput wrapper.
+
+    """
+
     (status, output) = getstatusoutput(command)
     if status == 0:
         if success != '':
@@ -219,6 +224,11 @@ def run(command, success='', failure='', fatal=False):
     return (status, output)
 
 def pre_commit_files():
+    """
+    Iterator for the list of files that will be affected by the current commit.
+
+    """
+
     (status, output) = run("git-rev-parse --verify HEAD", failure=None)
     if status == 0:
         against="HEAD"
@@ -230,11 +240,22 @@ def pre_commit_files():
         yield line[99:].strip()
 
 def all_files():
+    """
+    Iterator for the list of files according to "git ls-files".
+
+    """
+
     (status, output) = run("git ls-files", fatal=True)
     for name in output.split("\n"):
         yield name
 
 def post_checkout_files(old_head, new_head, branch):
+    """
+    Returns an iterator for the list of files that differ between old and new
+    references.
+
+    """
+
     def _g():
         (status, output) = run("git diff --name-only " + old_head + " " + new_head, fatal=True)
         for name in output.split("\n"):
@@ -243,7 +264,7 @@ def post_checkout_files(old_head, new_head, branch):
 
 def add_files(store, files_iter):
     """
-    Execute the pre-commit hook.
+    Add metadata of given files.
 
     """
 
@@ -260,7 +281,7 @@ def add_files(store, files_iter):
 
 def restore_files(store, files_iter):
     """
-    Execute the post-checkout hook.
+    Restore metadata of given files.
 
     """
 
