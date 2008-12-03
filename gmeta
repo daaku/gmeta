@@ -15,13 +15,18 @@ The included fields are:
 
 __version__ = "0.1.0"
 
+import logging as log
 import os
 import sqlite3
 import stat
-import logging as log
-from stat import ST_MODE, ST_MTIME, ST_ATIME
+import sys
 from collections import namedtuple
+from commands import getstatusoutput
+from optparse import OptionParser
+from stat import ST_MODE, ST_MTIME, ST_ATIME
 
+
+DB_FILE=".gmeta"
 
 """ A File object containing the metadata """
 File = namedtuple("File", "name, imode, mtime, atime")
@@ -32,17 +37,17 @@ class Store(object):
 
     """
 
-    def __init__(self, db_file):
+    def __init__(self):
         self.cache = {}
-        self.initdb(db_file)
+        self.initdb()
 
-    def initdb(self, db_file):
+    def initdb(self):
         """
         Initialize the database and create the schema if necessary.
 
         """
 
-        self.db = sqlite3.connect(db_file)
+        self.db = sqlite3.connect(DB_FILE)
         try:
             exists_sql = """
                 SELECT * FROM files LIMIT 1
@@ -63,6 +68,15 @@ class Store(object):
             log.debug('Created new "files" table.')
         self.cursor = self.db.cursor()
 
+    def commit(self):
+        """
+        Commit the changes.
+
+        """
+
+        log.debug("Commiting.")
+        self.db.commit()
+
     def __del__(self):
         """
         The changes to a Store are commited automatically when the Store is
@@ -70,8 +84,7 @@ class Store(object):
 
         """
 
-        log.debug("Commiting.")
-        self.db.commit()
+        self.commit()
 
     def __len__(self):
         """
@@ -185,30 +198,74 @@ class Store(object):
             self.cache[file.name] = file
             yield file
 
-def pre_commit(store, force):
+def run(command, success='', failure='', fatal=False):
+    (status, output) = getstatusoutput(command)
+    if status == 0:
+        if success != '':
+            log.info(success)
+        else:
+            log.debug('Command "' + command + '" completed successfully.')
+    else:
+        if failure == '':
+            failure = 'Command "' + command + '" failed with exit code "' + str(status) + '".'
+
+        if fatal:
+            log.critical(failure)
+            log.debug('Output:\n' + output)
+            exit(1)
+        elif failure:
+            log.warn(failure)
+    log.debug('Output:\n' + output)
+    return (status, output)
+
+def pre_commit_files():
+    (status, output) = run("git-rev-parse --verify HEAD", failure=None)
+    if status == 0:
+        against="HEAD"
+    else:
+        # Initial commit: diff against an empty tree object
+        against="4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+    (status, output) = run("git diff-index " + against, fatal=True)
+    for line in output.split("\n"):
+        yield line[99:].strip()
+
+def all_files():
+    (status, output) = run("git ls-files", fatal=True)
+    for name in output.split("\n"):
+        yield name
+
+def post_checkout_files(old_head, new_head, branch):
+    def _g():
+        (status, output) = run("git diff --name-only " + old_head + " " + new_head, fatal=True)
+        for name in output.split("\n"):
+            yield name
+    return _g
+
+def add_files(store, files_iter):
     """
     Execute the pre-commit hook.
 
     """
 
-    for root, dirs, files in os.walk("."):
-        for name in files:
-            name = os.path.join(root, name)[2:] # drop leading "./"
-            if force or name not in store:
-                stat = os.stat(name)
-                imode = stat[ST_MODE]
-                mtime = stat[ST_MTIME]
-                atime = stat[ST_ATIME]
-                f = File(name, imode, mtime, atime)
-                store[name] = f
+    for name in files_iter():
+        stat = os.stat(name)
+        store[name] = File(
+            name,
+            stat[ST_MODE],
+            stat[ST_MTIME],
+            stat[ST_ATIME],
+        )
+    store.commit()
+    run("git add " + DB_FILE, fatal=True)
 
-def post_checkout(store, force):
+def restore_files(store, files_iter):
     """
     Execute the post-checkout hook.
 
     """
 
-    for file in store:
+    for name in files_iter():
+        file = store[name]
         os.utime(file.name, (file.atime, file.mtime))
         os.chmod(file.name, file.imode)
 
@@ -218,36 +275,36 @@ def main():
 
     """
 
-    from optparse import OptionParser
+    usage = """usage: %%prog [OPTION] COMMAND
 
-    usage = "usage: %%prog [options] (pre-commit|post-checkout)\n\n%s" % __doc__
+%s
+
+Commands:
+  init          update entries for files according to "git ls-files"
+  restore       restores the metadata for files according to "git ls-files"
+  pre-commit    runs the pre-commit hook
+  post-checkout runs the post-checkout hook""" % __doc__
     parser = OptionParser(usage=usage, version="%prog-" + __version__)
-    parser.add_option(
-        "--db",
-        action="store",
-        dest="db_file",
-        default=".gmeta",
-        help='the db file to use [default ".gmeta"]'
-    )
-    parser.add_option(
-        "-f", "--force",
-        action="store_true",
-        dest="force",
-        default=False,
-        help="force processing all files"
-    )
     parser.add_option(
         "-l", "--logger",
         action="store_true",
         dest="logger",
+        #default=True,
         default=False,
         help="enable the verbose logger"
     )
 
     (options, args) = parser.parse_args()
 
-    if len(args) != 1:
-        parser.error("incorrect number of arguments")
+    # symlinked hook name is used to figure out what to do
+    basename = os.path.basename(sys.argv[0])
+    if basename == "pre-commit" or basename == "post-checkout":
+        command = basename
+    else:
+        if len(args) == 0:
+            parser.error("incorrect number of arguments")
+        else:
+            command = args[0]
 
     if options.logger:
         # colorized logger
@@ -266,15 +323,18 @@ def main():
         log.addLevelName(log.CRITICAL, RED    + ">> CRITICAL")
         log.basicConfig(level=log.DEBUG, format=" %(levelname)-19s" + DEF_COLOR + " %(message)s")
 
-    store = Store(db_file=options.db_file)
-    force = options.force
-    command = args[0]
-    if command == "pre-commit":
-        pre_commit(store, force)
+    store = Store()
+    if command == "init":
+        add_files(store, all_files)
+    elif command == "pre-commit":
+        add_files(store, pre_commit_files)
+    elif command == "restore":
+        restore_files(store, all_files)
     elif command == "post-checkout":
-        post_checkout(store, force)
+        restore_files(store, post_checkout_files(*args))
     else:
-        parser.error('unknown argument: "%s"' % command)
+        print 'unknown command: "%s"' % command
+        exit(1)
 
 if __name__ == "__main__":
     main()
