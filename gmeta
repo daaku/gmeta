@@ -269,13 +269,16 @@ def add_files(store, files_iter):
     """
 
     for name in files_iter():
-        stat = os.stat(name)
-        store[name] = File(
-            name,
-            stat[ST_MODE],
-            stat[ST_MTIME],
-            stat[ST_ATIME],
-        )
+        try:
+            stat = os.stat(name)
+            store[name] = File(
+                name,
+                stat[ST_MODE],
+                stat[ST_MTIME],
+                stat[ST_ATIME],
+            )
+        except OSError, e:
+            del store[name]
     store.commit()
     run("git add " + DB_FILE, fatal=True)
 
