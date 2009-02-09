@@ -11,13 +11,14 @@ The included fields are:
    - atime
    - mode
 
-### Usage: gmeta [OPTION] COMMAND
+### `Usage: gmeta [OPTION] COMMAND`
 
-Commands:
-  init          update entries for files according to "git ls-files"
-  restore       restores the metadata for files according to "git ls-files"
-  pre-commit    runs the pre-commit hook
-  post-checkout runs the post-checkout hook
+#### Commands:
+
+   - `init` - update entries for files according to "git ls-files"
+   - `restore` - restores the metadata for files according to "git ls-files"
+   - `pre-commit` - runs the pre-commit hook
+   - `post-checkout` - runs the post-checkout hook
 
 
 Symlink Support
